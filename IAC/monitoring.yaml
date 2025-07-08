@@ -1,0 +1,97 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Monitoring Stack for Resume Scanner & Job Matcher with CloudTrail and CloudWatch Alarms
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+  LabRoleArn:
+    Type: String
+    Description: ARN of the pre-existing LabRole
+  FetchJobArn:
+    Type: String
+    Description: ARN of the FetchJob Lambda
+  MatchArn:
+    Type: String
+    Description: ARN of the Match Lambda
+Resources:
+  MonitoringTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "MonitoringTopic-${Environment}"
+      Tags:
+        - Key: Name
+          Value: !Sub "${Environment}-monitoring-topic"
+
+  MonitoringTopicSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref MonitoringTopic
+      Protocol: email
+      Endpoint: "nakul13122001@gmail.com"  # Replace with actual admin email
+
+  CloudTrail:
+    Type: AWS::CloudTrail::Trail
+    Properties:
+      TrailName: !Sub "ResumeMatcherTrail-${Environment}"
+      S3BucketName: !Sub "cloudtrail-logs-${Environment}-25608"
+      IncludeGlobalServiceEvents: true
+      IsMultiRegionTrail: true
+      EnableLogFileValidation: true
+      IsLogging: true
+      CloudWatchLogsLogGroupArn: !GetAtt CloudTrailLogGroup.Arn
+      CloudWatchLogsRoleArn: !Ref LabRoleArn  # Use LabRoleArn instead of custom role
+      Tags:
+        - Key: Name
+          Value: !Sub "${Environment}-cloudtrail"
+
+  CloudTrailLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/cloudtrail/ResumeMatcher-${Environment}"
+      RetentionInDays: 30
+
+  FetchJobErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "FetchJobErrorAlarm-${Environment}"
+      AlarmDescription: "Alarm when FetchJob Lambda fails"
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref FetchJobArn
+      Statistic: Sum
+      Period: 300  # 5 minutes
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref MonitoringTopic
+
+  MatchErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "MatchErrorAlarm-${Environment}"
+      AlarmDescription: "Alarm when Match Lambda fails"
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref MatchArn
+      Statistic: Sum
+      Period: 300  # 5 minutes
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref MonitoringTopic
+
+Outputs:
+  MonitoringTopicArn:
+    Value: !Ref MonitoringTopic
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-MonitoringTopicArn"
+  CloudTrailArn:
+    Value: !GetAtt CloudTrail.Arn
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-CloudTrailArn"

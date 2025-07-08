@@ -1,0 +1,6 @@
+*.pdf
+*.docx
+*.drawio
+lambda/*.zip
+node_modules
+IAC/lambda/fetch_job/

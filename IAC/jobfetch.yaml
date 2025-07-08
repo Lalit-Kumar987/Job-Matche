@@ -1,0 +1,72 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Job Fetch Stack for Resume Scanner & Job Matcher
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+  DynamoDBJobPostingsName:
+    Type: String
+    Description: Name of the DynamoDB Job Postings table
+  LabRoleArn:
+    Type: String
+    Description: ARN of the pre-existing LabRole
+  OpenAILayerArn:
+    Type: String
+    Description: ARN of the OpenAI Layer
+  DataLibLayerArn:
+    Type: String
+    Description: ARN of the DataLib Layer
+Resources:
+  FetchJobLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: fetch_job.lambda_handler
+      Runtime: python3.9
+      Role: !Ref LabRoleArn
+      Code:
+        S3Bucket: cloudformation-stack-bucket-25608
+        S3Key: lambdas/fetch_job.zip
+      Environment:
+        Variables:
+          JOB_POSTINGS_TABLE: !Ref DynamoDBJobPostingsName
+          MATCH_UPDATE_TOPIC_ARN: !Ref MatchUpdateTopic
+      Timeout: 180  # Increased to 3 minutes
+      Layers:
+        - !Ref DataLibLayerArn
+        - !Ref OpenAILayerArn
+      Tags:
+        - Key: Name
+          Value: !Sub "${Environment}-fetch-job-lambda"
+  FetchJobSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "FetchJobSchedule-${Environment}"
+      Description: Daily trigger for FetchJobLambda at 6:00 AM ADT
+      ScheduleExpression: "cron(0 9 * * ? *)"  # 09:00 UTC = 6:00 AM ADT
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt FetchJobLambda.Arn
+          Id: "FetchJobTarget"
+  FetchJobPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref FetchJobLambda
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt FetchJobSchedule.Arn
+  MatchUpdateTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "MatchUpdateTopic-${Environment}"
+      Tags:
+        - Key: Name
+          Value: !Sub "${Environment}-match-update-topic"
+Outputs:
+  FetchJobArn:
+    Value: !GetAtt FetchJobLambda.Arn
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-FetchJobArn"
+  MatchUpdateTopicArn:
+    Value: !Ref MatchUpdateTopic
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-MatchUpdateTopicArn"

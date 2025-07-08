@@ -1,0 +1,86 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Matching Stack for Resume Scanner & Job Matcher
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+  DynamoDBApplicantDetailsName:
+    Type: String
+    Description: Name of the DynamoDB Applicant Details table
+  DynamoDBMatchResultsName:
+    Type: String
+    Description: Name of the DynamoDB Match Results table
+  DynamoDBJobPostingsName:
+    Type: String
+    Description: Name of the DynamoDB Job Posting Results table
+  DynamoDBUserEmbeddingsName:
+    Type: String
+    Description: Name of the DynamoDB User embeddings table
+  DynamoDBUserTopicsName:
+    Type: String
+    Description: Name of the DynamoDB User topic table
+  ResumeProcessingTopicArn:
+    Type: String
+    Description: ARN of the Resume Processing SNS Topic
+  MatchUpdateTopicArn:
+    Type: String
+    Description: ARN of the Match Update SNS Topic
+  ScipyLayerArn:
+    Type: String
+    Description: ARN of the Scipy Layer
+  LabRoleArn:
+    Type: String
+    Description: ARN of the pre-existing LabRole
+Resources:
+  MatchLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: match.lambda_handler
+      Runtime: python3.9
+      Role: !Ref LabRoleArn
+      Code:
+        S3Bucket: cloudformation-stack-bucket-25608
+        S3Key: lambdas/match.zip
+      Environment:
+        Variables:
+          APPLICANT_DETAILS_TABLE: !Ref DynamoDBApplicantDetailsName
+          MATCH_RESULTS_TABLE: !Ref DynamoDBMatchResultsName
+          JOB_POSTINGS_TABLE: !Ref DynamoDBJobPostingsName
+          APPLICANT_EMBEDDING_TABLE: !Ref DynamoDBUserEmbeddingsName
+          USER_TOPICS_TABLE: !Ref DynamoDBUserTopicsName
+      Layers:
+        - !Ref ScipyLayerArn
+      Tags:
+        - Key: Name
+          Value: !Sub "${Environment}-match-lambda"
+  MatchSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref ResumeProcessingTopicArn
+      Protocol: lambda
+      Endpoint: !GetAtt MatchLambda.Arn
+  MatchUpdateSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref MatchUpdateTopicArn
+      Protocol: lambda
+      Endpoint: !GetAtt MatchLambda.Arn
+  MatchPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref MatchLambda
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref ResumeProcessingTopicArn
+  MatchUpdatePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref MatchLambda
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref MatchUpdateTopicArn
+Outputs:
+  MatchArn:
+    Value: !GetAtt MatchLambda.Arn
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-MatchArn"

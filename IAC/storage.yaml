@@ -1,0 +1,155 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Storage Stack for Resume Scanner & Job Matcher
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  PrivateSubnet1Id:
+    Type: AWS::EC2::Subnet::Id
+  PrivateSubnet2Id:
+    Type: AWS::EC2::Subnet::Id
+Resources:
+  S3BucketInput:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "resume-input-${Environment}"
+      VersioningConfiguration:
+        Status: Enabled
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - GET
+              - PUT
+              - POST
+            AllowedOrigins:
+              - "*"
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-resume-input-bucket
+  S3BucketOutput:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "resume-output-${Environment}"
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - GET
+            AllowedOrigins:
+              - "*"
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-resume-output-bucket
+  DynamoDBApplicantDetails:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "applicant-details-${Environment}"
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-applicant-details-table
+  DynamoDBUserEmbeddings:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "user-embeddings-${Environment}"
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-user-embeddings-table
+  DynamoDBJobPostings:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "job-postings-${Environment}"
+      AttributeDefinitions:
+        - AttributeName: job_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: job_id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-job-postings-table
+  DynamoDBMatchResults:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "match-results-${Environment}"
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+        - AttributeName: job_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+        - AttributeName: job_id
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-match-results-table
+  DynamoDBUserTopics:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "user-topics-${Environment}"
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      Tags:
+        - Key: Name
+          Value: !Sub "${Environment}-user-topics-table"
+Outputs:
+  S3BucketInputName:
+    Value: !Ref S3BucketInput
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-S3BucketInputName"
+  S3BucketOutputName:
+    Value: !Ref S3BucketOutput
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-S3BucketOutputName"
+  DynamoDBApplicantDetailsName:
+    Value: !Ref DynamoDBApplicantDetails
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-DynamoDBApplicantDetailsName"
+  DynamoDBUserEmbeddingsName:
+    Value: !Ref DynamoDBUserEmbeddings
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-DynamoDBUserEmbeddingsName"
+  DynamoDBJobPostingsName:
+    Value: !Ref DynamoDBJobPostings
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-DynamoDBJobPostingsName"
+  DynamoDBMatchResultsName:
+    Value: !Ref DynamoDBMatchResults
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-DynamoDBMatchResultsName"
+  DynamoDBUserTopicsName:
+    Value: !Ref DynamoDBUserTopics
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-DynamoDBUserTopicsName"

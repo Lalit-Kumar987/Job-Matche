@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Parent template for Resume Scanner & Job Matcher
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+  LabRoleArn:
+    Type: String
+    Description: ARN of the pre-existing LabRole
+Resources:
+  NetworkingStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://cloudformation-stack-bucket-25608.s3.us-east-1.amazonaws.com/networking.yaml"
+      Parameters:
+        Environment: !Ref Environment
+  StorageStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: NetworkingStack
+    Properties:
+      TemplateURL: !Sub "https://cloudformation-stack-bucket-25608.s3.us-east-1.amazonaws.com/storage.yaml"
+      Parameters:
+        Environment: !Ref Environment
+        VpcId: !GetAtt NetworkingStack.Outputs.VpcId
+        SecurityGroupId: !GetAtt NetworkingStack.Outputs.SecurityGroupId
+        PrivateSubnet1Id: !GetAtt NetworkingStack.Outputs.PrivateSubnet1Id
+        PrivateSubnet2Id: !GetAtt NetworkingStack.Outputs.PrivateSubnet2Id
+  LambdaStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: StorageStack
+    Properties:
+      TemplateURL: !Sub "https://cloudformation-stack-bucket-25608.s3.us-east-1.amazonaws.com/lambdas.yaml"
+      Parameters:
+        Environment: !Ref Environment
+        VpcId: !GetAtt NetworkingStack.Outputs.VpcId
+        SecurityGroupId: !GetAtt NetworkingStack.Outputs.SecurityGroupId
+        PrivateSubnet1Id: !GetAtt NetworkingStack.Outputs.PrivateSubnet1Id
+        PrivateSubnet2Id: !GetAtt NetworkingStack.Outputs.PrivateSubnet2Id
+        S3BucketInputName: !GetAtt StorageStack.Outputs.S3BucketInputName
+        S3BucketOutputName: !GetAtt StorageStack.Outputs.S3BucketOutputName
+        DynamoDBApplicantDetailsName: !GetAtt StorageStack.Outputs.DynamoDBApplicantDetailsName
+        DynamoDBUserEmbeddingsName: !GetAtt StorageStack.Outputs.DynamoDBUserEmbeddingsName
+        DynamoDBUserTopicsName: !GetAtt StorageStack.Outputs.DynamoDBUserTopicsName
+        DynamoDBMatchResultsName: !GetAtt StorageStack.Outputs.DynamoDBMatchResultsName
+        DynamoDBJobPostingsName: !GetAtt StorageStack.Outputs.DynamoDBJobPostingsName
+        S3WebsiteURL: ""
+        LabRoleArn: !Ref LabRoleArn
+  CognitoStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: LambdaStack
+    Properties:
+      TemplateURL: !Sub "https://cloudformation-stack-bucket-25608.s3.us-east-1.amazonaws.com/cognito.yaml"
+      Parameters:
+        Environment: !Ref Environment
+        LabRoleArn: !Ref LabRoleArn
+  ApiGatewayStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: CognitoStack
+    Properties:
+      TemplateURL: !Sub "https://cloudformation-stack-bucket-25608.s3.us-east-1.amazonaws.com/apigateway.yaml"
+      Parameters:
+        Environment: !Ref Environment
+        GenerateUploadUrlArn: !GetAtt LambdaStack.Outputs.GenerateUploadUrlArn
+        CognitoUserPoolArn: !GetAtt CognitoStack.Outputs.UserPoolArn
+        CognitoPostAuthArn: !GetAtt LambdaStack.Outputs.CognitoPostAuthArn
+        FetchUserMatchesArn: !GetAtt LambdaStack.Outputs.FetchUserMatchesArn
+        FetchJobDetailsArn: !GetAtt LambdaStack.Outputs.FetchJobDetailsArn
+  JobFetchStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: ApiGatewayStack
+    Properties:
+      TemplateURL: !Sub "https://cloudformation-stack-bucket-25608.s3.us-east-1.amazonaws.com/jobfetch.yaml"
+      Parameters:
+        Environment: !Ref Environment
+        DynamoDBJobPostingsName: !GetAtt StorageStack.Outputs.DynamoDBJobPostingsName
+        LabRoleArn: !Ref LabRoleArn
+        OpenAILayerArn: !GetAtt LambdaStack.Outputs.OpenAILayerArn
+        DataLibLayerArn: !GetAtt LambdaStack.Outputs.DataLibLayerArn
+  MatchingStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: JobFetchStack
+    Properties:
+      TemplateURL: !Sub "https://cloudformation-stack-bucket-25608.s3.us-east-1.amazonaws.com/matching.yaml"
+      Parameters:
+        Environment: !Ref Environment
+        DynamoDBApplicantDetailsName: !GetAtt StorageStack.Outputs.DynamoDBApplicantDetailsName
+        DynamoDBMatchResultsName: !GetAtt StorageStack.Outputs.DynamoDBMatchResultsName
+        DynamoDBJobPostingsName: !GetAtt StorageStack.Outputs.DynamoDBJobPostingsName
+        DynamoDBUserEmbeddingsName: !GetAtt StorageStack.Outputs.DynamoDBUserEmbeddingsName
+        DynamoDBUserTopicsName: !GetAtt StorageStack.Outputs.DynamoDBUserTopicsName
+        ResumeProcessingTopicArn: !GetAtt LambdaStack.Outputs.ResumeProcessingTopicArn
+        MatchUpdateTopicArn: !GetAtt JobFetchStack.Outputs.MatchUpdateTopicArn
+        ScipyLayerArn: !GetAtt LambdaStack.Outputs.ScipyLayerArn
+        LabRoleArn: !Ref LabRoleArn
+  FrontEndStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: LambdaStack
+    Properties:
+      TemplateURL: !Sub "https://cloudformation-stack-bucket-25608.s3.us-east-1.amazonaws.com/front-end.yaml"
+      Parameters:
+        Environment: !Ref Environment
+        VpcId: !GetAtt NetworkingStack.Outputs.VpcId
+        SecurityGroupId: !GetAtt NetworkingStack.Outputs.SecurityGroupId
+        S3BucketInputName: !GetAtt StorageStack.Outputs.S3BucketInputName
+        PublicSubnet1Id: !GetAtt NetworkingStack.Outputs.PublicSubnet1Id
+        PublicSubnet2Id: !GetAtt NetworkingStack.Outputs.PublicSubnet2Id
+  MonitoringStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: JobFetchStack
+    Properties:
+      TemplateURL: !Sub "https://cloudformation-stack-bucket-25608.s3.us-east-1.amazonaws.com/monitoring.yaml"
+      Parameters:
+        Environment: !Ref Environment
+        LabRoleArn: !Ref LabRoleArn
+        FetchJobArn: !GetAtt JobFetchStack.Outputs.FetchJobArn
+        MatchArn: !GetAtt MatchingStack.Outputs.MatchArn
+Outputs:
+  StackStatus:
+    Value: !Sub "Stack ${AWS::StackName} deployed successfully"

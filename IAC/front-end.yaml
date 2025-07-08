@@ -1,0 +1,56 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Front-End Stack for Resume Scanner & Job Matcher
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  S3BucketInputName:
+    Type: String
+  PublicSubnet1Id:
+    Type: AWS::EC2::Subnet::Id
+  PublicSubnet2Id:
+    Type: AWS::EC2::Subnet::Id
+Resources:
+  S3BucketUI:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "resume-ui-${Environment}"
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: error.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-resume-ui-bucket
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3BucketUI
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Sub "arn:aws:s3:::resume-ui-${Environment}/*"
+Outputs:
+  S3BucketUIName:
+    Value: !Ref S3BucketUI
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-S3BucketUIName"
+  S3WebsiteURL:
+    Value: !GetAtt S3BucketUI.WebsiteURL
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-S3WebsiteURL"

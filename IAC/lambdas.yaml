@@ -1,0 +1,383 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Initial Lambda Stack for Resume Scanner & Job Matcher
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  PrivateSubnet1Id:
+    Type: AWS::EC2::Subnet::Id
+  PrivateSubnet2Id:
+    Type: AWS::EC2::Subnet::Id
+  S3BucketInputName:
+    Type: String
+  S3BucketOutputName:
+    Type: String
+  DynamoDBApplicantDetailsName:
+    Type: String
+  DynamoDBUserEmbeddingsName:
+    Type: String
+  DynamoDBUserTopicsName:
+    Type: String
+  DynamoDBMatchResultsName:
+    Type: String
+    Description: Name of the DynamoDB Match Results table
+  DynamoDBJobPostingsName:
+    Type: String
+    Description: Name of the DynamoDB Job Posting Results table
+  S3WebsiteURL:
+    Type: String
+  LabRoleArn:
+    Type: String
+    Description: ARN of the pre-existing LabRole
+Resources:
+  OpenAILayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: !Sub "${Environment}-OpenAILayer"
+      Description: Layer containing OpenAI dependencies for Python 3.9
+      CompatibleRuntimes:
+        - python3.9
+      Content:
+        S3Bucket: cloudformation-stack-bucket-25608
+        S3Key: lambdas/openai-aws-lambda-layer-3.9.zip
+
+  DataLibLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: !Sub "${Environment}-DataLibLayer"
+      Description: Layer containing openai[datalib] dependencies for Python 3.9
+      CompatibleRuntimes:
+        - python3.9
+      Content:
+        S3Bucket: cloudformation-stack-bucket-25608
+        S3Key: lambdas/datalib_layer.zip
+  
+  ScipyLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: !Sub "${Environment}-ScipyLayer"
+      Description: Layer containing Scipy dependencies for Python 3.9
+      CompatibleRuntimes:
+        - python3.9
+      Content:
+        S3Bucket: cloudformation-stack-bucket-25608
+        S3Key: lambdas/scipy_numpy_layer.zip
+
+  ResumeProcessingTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "ResumeProcessingTopic-${Environment}"
+      Tags:
+        - Key: Name
+          Value: !Sub "${Environment}-resume-processing-topic"
+
+  TextractJobTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "TextractJobTopic-${Environment}"
+      Tags:
+        - Key: Name
+          Value: !Sub "${Environment}-textract-job-topic"
+  
+  UserMatchTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "UserMatchTopic-${Environment}"
+      Tags:
+        - Key: Name
+          Value: !Sub "${Environment}-user-match-topic"
+
+  UploadHandler:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: upload_handler.lambda_handler
+      Runtime: python3.9
+      Role: !Ref LabRoleArn
+      Code:
+        S3Bucket: cloudformation-stack-bucket-25608
+        S3Key: lambdas/upload_handler.zip
+      VpcConfig:
+        SubnetIds:
+          - !Ref PrivateSubnet1Id
+          - !Ref PrivateSubnet2Id
+        SecurityGroupIds:
+          - !Ref SecurityGroupId
+      Environment:
+        Variables:
+          OUTPUT_BUCKET: !Ref S3BucketOutputName
+          TEXTRACT_JOB_TOPIC_ARN: !Ref TextractJobTopic
+      Timeout: 180  # Increased to 3 minutes
+      Tags:
+        - Key: Name
+          Value: !Sub "${Environment}-upload-handler"
+
+  TextractProcessor:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: textract_processor.lambda_handler
+      Runtime: python3.9
+      Role: !Ref LabRoleArn
+      Code:
+        S3Bucket: cloudformation-stack-bucket-25608
+        S3Key: lambdas/textract_processor.zip
+      VpcConfig:
+        SubnetIds:
+          - !Ref PrivateSubnet1Id
+          - !Ref PrivateSubnet2Id
+        SecurityGroupIds:
+          - !Ref SecurityGroupId
+      Environment:
+        Variables:
+          OUTPUT_BUCKET: !Ref S3BucketOutputName
+          SNS_TOPIC_ARN: !Ref ResumeProcessingTopic
+      Timeout: 180  # Increased to 3 minutes
+      Tags:
+        - Key: Name
+          Value: !Sub "${Environment}-textract-processor"
+
+  UserDetailsExtractor:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: user_details_extractor.lambda_handler
+      Runtime: python3.9
+      Role: !Ref LabRoleArn
+      Code:
+        S3Bucket: cloudformation-stack-bucket-25608
+        S3Key: lambdas/user_details_extractor.zip
+      VpcConfig:
+        SubnetIds:
+          - !Ref PrivateSubnet1Id
+          - !Ref PrivateSubnet2Id
+        SecurityGroupIds:
+          - !Ref SecurityGroupId
+      Environment:
+        Variables:
+          APPLICANT_DETAILS_TABLE: !Ref DynamoDBApplicantDetailsName
+          USER_EMBEDDINGS_TABLE: !Ref DynamoDBUserEmbeddingsName
+          USER_MATCH_TOPIC_ARN: !Ref UserMatchTopic
+      Layers:
+        - !Ref DataLibLayer
+        - !Ref OpenAILayer
+      Timeout: 180  # Increased to 3 minutes
+      Tags:
+        - Key: Name
+          Value: !Sub "${Environment}-user-details-extractor"
+
+  UserDetailsExtractorPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref UserDetailsExtractor
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref ResumeProcessingTopic
+
+  UserDetailsExtractorSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref ResumeProcessingTopic
+      Protocol: lambda
+      Endpoint: !GetAtt UserDetailsExtractor.Arn
+
+  TextractProcessorPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref TextractProcessor
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref TextractJobTopic
+
+  TextractProcessorSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref TextractJobTopic
+      Protocol: lambda
+      Endpoint: !GetAtt TextractProcessor.Arn
+
+  GenerateUploadUrlLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: generate_upload_url.lambda_handler
+      Runtime: python3.9
+      Role: !Ref LabRoleArn
+      Code:
+        S3Bucket: cloudformation-stack-bucket-25608
+        S3Key: lambdas/generate_upload_url.zip
+      VpcConfig:
+        SubnetIds:
+          - !Ref PrivateSubnet1Id
+          - !Ref PrivateSubnet2Id
+        SecurityGroupIds:
+          - !Ref SecurityGroupId
+      Timeout: 180  # Increased to 3 minutes
+      Tags:
+        - Key: Name
+          Value: !Sub "${Environment}-generate-upload-url-lambda"
+  
+  CognitoPostAuthLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: cognito_post_auth.lambda_handler
+      Runtime: python3.9
+      Role: !Ref LabRoleArn
+      Code:
+        S3Bucket: cloudformation-stack-bucket-25608
+        S3Key: lambdas/cognito_post_auth.zip
+      VpcConfig:
+        SubnetIds:
+          - !Ref PrivateSubnet1Id
+          - !Ref PrivateSubnet2Id
+        SecurityGroupIds:
+          - !Ref SecurityGroupId
+      Environment:
+        Variables:
+          USER_TOPICS_TABLE: !Ref DynamoDBUserTopicsName
+      Timeout: 60
+      Tags:
+        - Key: Name
+          Value: !Sub "${Environment}-cognito-post-auth-lambda"
+  
+  ImmediateUserMatch:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: immediate_user_match.lambda_handler
+      Runtime: python3.9
+      Role: !Ref LabRoleArn
+      Code:
+        S3Bucket: cloudformation-stack-bucket-25608
+        S3Key: lambdas/immediate_user_match.zip
+      VpcConfig:
+        SubnetIds:
+          - !Ref PrivateSubnet1Id
+          - !Ref PrivateSubnet2Id
+        SecurityGroupIds:
+          - !Ref SecurityGroupId
+      Environment:
+        Variables:
+          APPLICANT_DETAILS_TABLE: !Ref DynamoDBApplicantDetailsName
+          MATCH_RESULTS_TABLE: !Ref DynamoDBMatchResultsName
+          JOB_POSTINGS_TABLE: !Ref DynamoDBJobPostingsName
+          USER_EMBEDDINGS_TABLE: !Ref DynamoDBUserEmbeddingsName
+      Layers:
+        - !Ref ScipyLayer
+      Timeout: 180
+      Tags:
+        - Key: Name
+          Value: !Sub "${Environment}-immediate-user-match"
+
+  ImmediateUserMatchPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ImmediateUserMatch
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref UserMatchTopic
+
+  ImmediateUserMatchSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref UserMatchTopic
+      Protocol: lambda
+      Endpoint: !GetAtt ImmediateUserMatch.Arn
+  
+  FetchUserMatchesLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: fetch_user_matches.lambda_handler
+      Runtime: python3.9
+      Role: !Ref LabRoleArn
+      Code:
+        S3Bucket: cloudformation-stack-bucket-25608
+        S3Key: lambdas/fetch_user_matches.zip
+      VpcConfig:
+        SubnetIds:
+          - !Ref PrivateSubnet1Id
+          - !Ref PrivateSubnet2Id
+        SecurityGroupIds:
+          - !Ref SecurityGroupId
+      Environment:
+        Variables:
+          MATCH_RESULTS_TABLE: !Ref DynamoDBMatchResultsName
+      Timeout: 60
+      Tags:
+        - Key: Name
+          Value: !Sub "${Environment}-fetch-user-matches-lambda"
+
+  FetchJobDetailsLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: fetch_job_details.lambda_handler
+      Runtime: python3.9
+      Role: !Ref LabRoleArn
+      Code:
+        S3Bucket: cloudformation-stack-bucket-25608
+        S3Key: lambdas/fetch_job_details.zip
+      VpcConfig:
+        SubnetIds:
+          - !Ref PrivateSubnet1Id
+          - !Ref PrivateSubnet2Id
+        SecurityGroupIds:
+          - !Ref SecurityGroupId
+      Environment:
+        Variables:
+          JOB_POSTINGS_TABLE: !Ref DynamoDBJobPostingsName
+      Timeout: 60
+      Tags:
+        - Key: Name
+          Value: !Sub "${Environment}-fetch-job-details-lambda"
+Outputs:
+  UploadHandlerArn:
+    Value: !GetAtt UploadHandler.Arn
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-UploadHandlerArn"
+  TextractProcessorArn:
+    Value: !GetAtt TextractProcessor.Arn
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-TextractProcessorArn"
+  UserDetailsExtractorArn:
+    Value: !GetAtt UserDetailsExtractor.Arn
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-UserDetailsExtractorArn"
+  ResumeProcessingTopicArn:
+    Value: !Ref ResumeProcessingTopic
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-ResumeProcessingTopicArn"
+  TextractJobTopicArn:
+    Value: !Ref TextractJobTopic
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-TextractJobTopicArn"
+  GenerateUploadUrlArn:
+    Value: !GetAtt GenerateUploadUrlLambda.Arn
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-GenerateUploadUrlArn"
+  OpenAILayerArn:
+    Value: !Ref OpenAILayer
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-OpenAILayerArn"
+  DataLibLayerArn:
+    Value: !Ref DataLibLayer
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-DataLibLayerArn"
+  ScipyLayerArn:
+    Value: !Ref ScipyLayer
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-ScipyLayerArn"
+  CognitoPostAuthArn:
+    Value: !GetAtt CognitoPostAuthLambda.Arn
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-CognitoPostAuthArn"
+  ImmediateUserMatchArn:
+    Value: !GetAtt ImmediateUserMatch.Arn
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-ImmediateUserMatchArn"
+  FetchUserMatchesArn:
+    Value: !GetAtt FetchUserMatchesLambda.Arn
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-FetchUserMatchesArn"
+  FetchJobDetailsArn:
+    Value: !GetAtt FetchJobDetailsLambda.Arn
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-FetchJobDetailsArn"

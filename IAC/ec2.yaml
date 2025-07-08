@@ -1,0 +1,89 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: EC2 Stack for Resume Scanner & Job Matcher Model Hosting
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  PrivateSubnet1Id:
+    Type: AWS::EC2::Subnet::Id
+  PrivateSubnet2Id:
+    Type: AWS::EC2::Subnet::Id
+  LabRoleArn:
+    Type: String
+    Description: ARN of the pre-existing LabRole
+Resources:
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.large
+      ImageId: ami-09e6f87a47903347c  # Amazon Linux 2 with Docker (us-east-1)
+      SubnetId: !Ref PrivateSubnet1Id
+      SecurityGroupIds:
+        - !Ref SecurityGroupId
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          exec > /var/log/user-data.log 2>&1  # Log everything
+
+          yum update -y
+          yum install -y docker python3 python3-pip
+          service docker start
+          usermod -aG docker ec2-user
+
+          # Enable Docker at boot
+          systemctl enable docker
+
+          docker run -d -p 8080:80 -e MODEL_ID=sentence-transformers/all-MiniLM-L6-v2 huggingface/text-embeddings:latest
+
+          sleep 15
+          docker ps -a > /home/ec2-user/docker_status.txt
+
+          # Install Python and FastAPI
+          pip3 install fastapi uvicorn requests
+
+          # Create proxy app
+          cat > /home/ec2-user/app.py << 'EOL'
+          from fastapi import FastAPI, HTTPException
+          import requests, json
+
+          app = FastAPI()
+
+          @app.post("/predict")
+          def predict(data: dict):
+              text = data.get("text", "")
+              task = data.get("task", "embedding")
+              url = "http://localhost:7860/predict"
+              try:
+                  res = requests.post(url, json={"inputs": text, "task": task}, timeout=30)
+                  res.raise_for_status()
+                  return res.json()
+              except Exception as e:
+                  raise HTTPException(status_code=500, detail=str(e))
+
+          if __name__ == "__main__":
+              import uvicorn
+              uvicorn.run(app, host="0.0.0.0", port=5000)
+          EOL
+
+          chown ec2-user:ec2-user /home/ec2-user/app.py
+          chmod +x /home/ec2-user/app.py
+          su - ec2-user -c "nohup python3 /home/ec2-user/app.py > /home/ec2-user/app.log 2>&1 &"
+
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-resume-ec2
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Select [1, !Split ["/", !Ref LabRoleArn]]
+Outputs:
+  EC2PrivateIp:
+    Value: !GetAtt EC2Instance.PrivateIp
+    Export:
+      Name: !Sub "ResumeMatcher-${Environment}-EC2PrivateIp"
