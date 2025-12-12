@@ -27,7 +27,7 @@ Resources:
     Properties:
       TopicArn: !Ref MonitoringTopic
       Protocol: email
-      Endpoint: "nakul13122001@gmail.com"  # Replace with actual admin email
+      Endpoint: "lalitsharma78883@gmail.com"  # Replace with actual admin email
 
   CloudTrail:
     Type: AWS::CloudTrail::Trail
